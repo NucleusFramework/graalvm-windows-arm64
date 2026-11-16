@@ -5,7 +5,6 @@
 # and jvm.lib, from oracle/graal at the release's commit, with patches/*.patch applied to them. Run in an ARM64 MSVC
 # environment (vcvarsall arm64).
 set -euo pipefail
-export MSYS2_ARG_CONV_EXCL='*'
 graal=$(cd "$1" && pwd); out=$2
 recipe=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out"; out=$(cd "$out" && pwd)
@@ -14,6 +13,10 @@ work=$(mktemp -d)
 
 src=$work/substratevm/src
 w() { cygpath -w "$1"; }
+# MSVC's tools take '-' options and Windows paths, which MSYS must leave alone
+cl() { MSYS2_ARG_CONV_EXCL='*' command cl "$@"; }
+lib() { MSYS2_ARG_CONV_EXCL='*' command lib "$@"; }
+dumpbin() { MSYS2_ARG_CONV_EXCL='*' command dumpbin "$@"; }
 compile() { # <lib> <cflags> <dir>...
   local lib=$1 flags=$2; shift 2
   local objs="$work/obj/$lib"; mkdir -p "$objs"
