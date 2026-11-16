@@ -42,7 +42,7 @@ member=$(lib -nologo -list "$amd64jvm" | tr -d '\r' | grep -i 'JvmFuncsFallbacks
   echo '#include <stdio.h>'
   echo '#include <stdlib.h>'
   echo 'static void unimplemented(const char *name) { fprintf(stderr, "%s is not supported in a native image\n", name); abort(); }'
-  dumpbin -nologo -symbols "$(w "$fallbacks/amd64.obj")" | tr -d '\r' | grep -E 'SECT[0-9A-F]+ .*External' | sed 's/.*| //' | grep -E '^[A-Za-z][A-Za-z0-9_]*$' | sort -u |
+  dumpbin -nologo -symbols "$(w "$fallbacks/amd64.obj")" | tr -d '\r' | grep -E 'SECT[0-9A-F]+ .*External' | sed 's/.*| //' | grep -E '^(JVM_|jio_)[A-Za-z0-9_]*$' | sort -u |
     while read -r name; do echo "void $name(void) { unimplemented(\"$name\"); }"; done
 } > "$fallbacks/JvmFuncsFallbacks.c"
 grep -c '^void' "$fallbacks/JvmFuncsFallbacks.c"
