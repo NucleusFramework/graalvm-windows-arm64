@@ -84,7 +84,7 @@ jobs:
           obj=$(cygpath -w "$(find out/tmp -name 'hello.obj' | head -1)")
           libs=$(cygpath -w "$GRAAL/lib/svm/clibraries/windows-amd64"); static=$(cygpath -w "$GRAAL/lib/static/windows-amd64")
           cl -nologo -MD -I"$(cygpath -w out)" probe/main.c "$obj" -link -LIBPATH:"$libs" -LIBPATH:"$static" \
-            libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib \
+            libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib version.lib \
             -OUT:hello.exe
           ./hello.exe
       - uses: actions/upload-artifact@v4
