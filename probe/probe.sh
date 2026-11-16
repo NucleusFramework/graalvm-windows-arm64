@@ -9,7 +9,8 @@ mkdir -p "$out"; out=$(cd "$out" && pwd)
 "$graal/bin/javac" -d "$out/classes" "$probe/Hello.java" || exit 1
 extra=()
 if [ -n "$platform" ]; then
-  extra=(-Dsvm.platform="$platform" -H:-CheckToolchain -H:-UseCAPCache -H:+NewCAPCache -H:CAPCacheDir="$out/capcache")
+  # No foreign function ABI for Windows on ARM64 in Substrate VM (its Windows one is AMD64's)
+  extra=(-Dsvm.platform="$platform" -H:-ForeignAPISupport -H:-CheckToolchain -H:-UseCAPCache -H:+NewCAPCache -H:CAPCacheDir="$out/capcache")
 fi
 if [ -n "$patchDir" ]; then
   for jar in "$patchDir"/patch-*.jar; do
