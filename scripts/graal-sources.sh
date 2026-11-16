@@ -10,6 +10,8 @@ commit=$(sed -n 's/^SOURCE=.*substratevm:\([0-9a-f]*\).*/\1/p' "$graal/release")
 [ -n "$commit" ] || { echo "No substratevm commit in $graal/release" >&2; exit 1; }
 echo "oracle/graal $commit: $*"
 mkdir -p "$dir"
+# Git for Windows wants Windows paths (MSYS2_ARG_CONV_EXCL may disable their conversion)
+command -v cygpath >/dev/null && dir=$(cygpath -m "$dir")
 git -C "$dir" init -q
 git -C "$dir" remote add origin https://github.com/oracle/graal.git
 git -C "$dir" sparse-checkout set --no-cone "$@"

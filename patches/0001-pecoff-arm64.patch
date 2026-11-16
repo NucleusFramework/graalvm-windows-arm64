@@ -29,6 +29,19 @@ index a6eadd2..b6ce8f5 100644
      }
      //@formatter:on
      // Checkstyle: resume
+diff --git a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffHeaderStruct.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffHeaderStruct.java
+index 881f771..0f909f6 100644
+--- a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffHeaderStruct.java
++++ b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffHeaderStruct.java
+@@ -37,7 +37,7 @@ public class PECoffHeaderStruct {
+     public PECoffHeaderStruct() {
+         header = PECoffByteBuffer.allocate(IMAGE_FILE_HEADER.totalsize);
+ 
+-        header.putChar(IMAGE_FILE_HEADER.Machine.off, IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64);
++        header.putChar(IMAGE_FILE_HEADER.Machine.off, (char) PECoffMachine.getSystemNativeValue().toShort());
+         header.putInt(IMAGE_FILE_HEADER.TimeDateStamp.off, (int) (GraalServices.milliTimeStamp() / 1000));
+         header.putInt(IMAGE_FILE_HEADER.PointerToSymbolTable.off, 0);
+         header.putInt(IMAGE_FILE_HEADER.NumberOfSymbols.off, 0);
 diff --git a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java
 index b6f3f2a..09dce1a 100644
 --- a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java
