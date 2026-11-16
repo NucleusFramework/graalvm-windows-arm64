@@ -1,0 +1,56 @@
+name: JDK static libraries
+
+# The JDK's static libraries for Windows on ARM64 (java.lib, nio.lib, net.lib, zip.lib...), which native images link and
+# GraalVM CE ships for windows-amd64 only: labs-openjdk (the JDK GraalVM CE is built on) at the release's JVMCI tag,
+# built with OpenJDK's static-libs-image target
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: labs-openjdk tag (the jvmci-<version>-b<build> of GraalVM CE's JAVA_RUNTIME_VERSION)
+        default: jvmci-25.5-b26
+
+jobs:
+  build:
+    runs-on: windows-11-arm
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Boot JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '25'
+          architecture: aarch64
+      - name: Cygwin
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://cygwin.com/setup-x86_64.exe -OutFile setup.exe
+          Start-Process -Wait -FilePath .\setup.exe -ArgumentList '-q','-n','-N','-d','-R','C:\cygwin','-l','C:\cygwin-pkgs','-s','https://mirrors.kernel.org/sourceware/cygwin/','-P','autoconf,make,zip,unzip,file,diffutils,tar,git'
+      - name: labs-openjdk
+        run: git clone -q --depth 1 --branch '${{ inputs.tag }}' https://github.com/graalvm/labs-openjdk.git C:/jdk
+      - name: Configure
+        shell: C:\cygwin\bin\bash.exe --login -eo pipefail -o igncr {0}
+        env:
+          BOOT_JDK: ${{ env.JAVA_HOME }}
+        run: |
+          cd /cygdrive/c/jdk
+          bash configure --openjdk-target=aarch64-unknown-cygwin --with-boot-jdk="$(cygpath -u "$BOOT_JDK")" \
+            --with-debug-level=release --with-jvm-variants=server --disable-warnings-as-errors --with-version-opt=static \
+            --disable-javac-server 2>&1 | tail -40
+      - name: static-libs-image
+        shell: C:\cygwin\bin\bash.exe --login -eo pipefail -o igncr {0}
+        run: |
+          cd /cygdrive/c/jdk
+          make static-libs-image LOG=warn 2>&1 | tail -80
+          ls build/*/images/static-libs/lib
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jdk-static-libs-windows-aarch64-${{ inputs.tag }}
+          path: |
+            C:/jdk/build/*/images/static-libs/lib
+            C:/jdk/build/*/configure-support/config.log
+          if-no-files-found: warn
