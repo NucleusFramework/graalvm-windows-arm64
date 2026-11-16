@@ -106,8 +106,9 @@ jobs:
           cl -nologo -MD -I"$(cygpath -w out)" probe/main.c "$obj" -link -LIBPATH:"$(cygpath -w clibs-out)" -LIBPATH:"$(cygpath -w "$JDK_LIBS")" \
             libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib version.lib \
             -OUT:hello.exe 2>&1 | tee link.log
-          grep -o 'unresolved external symbol [A-Za-z0-9_@?$]*' link.log | awk '{print $4}' | sort -u | head -100
-          ./hello.exe
+          { grep -o 'unresolved external symbol [A-Za-z0-9_@?$]*' link.log || true; } | awk '{print $4}' | sort -u | head -100
+          dumpbin -nologo -headers hello.exe | grep -i machine
+          ./hello.exe; echo "exit: $?"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
