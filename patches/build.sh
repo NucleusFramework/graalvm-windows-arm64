@@ -10,16 +10,8 @@ patches=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$out"; out=$(cd "$out" && pwd)
 work=$(mktemp -d)
 
-commit=$(sed -n 's/^SOURCE=.*substratevm:\([0-9a-f]*\).*/\1/p' "$graal/release")
-[ -n "$commit" ] || { echo "No substratevm commit in $graal/release" >&2; exit 1; }
-echo "oracle/graal $commit"
-
-# The patched files, as of the release
-for f in $(sed -n 's|^--- a/||p' "$patches"/*.patch | sort -u); do
-  mkdir -p "$work/$(dirname "$f")"
-  curl -sSfL -o "$work/$f" "https://raw.githubusercontent.com/oracle/graal/$commit/$f"
-done
-(cd "$work" && git init -q && git apply -v "$patches"/*.patch)
+# The patched files, as of the release, patched
+"$patches/../scripts/graal-sources.sh" "$graal" "$work" $(sed -n 's|^+++ b/||p' "$patches"/*.patch | grep '\.java$' | sort -u)
 
 # Windows' java wants Windows paths, ';' separated
 case $(uname -s) in

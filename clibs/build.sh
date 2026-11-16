@@ -10,21 +10,7 @@ graal=$(cd "$1" && pwd); out=$2
 recipe=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out"; out=$(cd "$out" && pwd)
 work=$(mktemp -d)
-commit=$(sed -n 's/^SOURCE=.*substratevm:\([0-9a-f]*\).*/\1/p' "$graal/release")
-echo "oracle/graal $commit"
-
-# The projects' sources (the GitHub tree of the release's commit)
-projects="com.oracle.svm.native.libchelper com.oracle.svm.native.jvm.windows"
-tree=$(gh api "repos/oracle/graal/git/trees/$commit?recursive=1" --jq '.tree[] | select(.type == "blob") | .path' | tr -d '\r')
-for project in $projects; do
-  for f in $(echo "$tree" | grep "^substratevm/src/$project/"); do
-    mkdir -p "$work/$(dirname "$f")"
-    curl -sSfL -o "$work/$f" "https://raw.githubusercontent.com/oracle/graal/$commit/$f"
-  done
-done
-# The patches of these projects
-(cd "$work" && git init -q && for p in "$recipe"/patches/*.patch; do
-  grep -q "^+++ b/substratevm/src/com.oracle.svm.native" "$p" && git apply -v "$p"; done; true)
+"$recipe/scripts/graal-sources.sh" "$graal" "$work" substratevm/src/com.oracle.svm.native.libchelper/ substratevm/src/com.oracle.svm.native.jvm.windows/
 
 src=$work/substratevm/src
 w() { cygpath -w "$1"; }
