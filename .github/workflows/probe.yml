@@ -48,14 +48,19 @@ jobs:
         run: |
           which cl link lib || true
           cl 2>&1 | head -2 || true
+      - name: Patches
+        if: matrix.platform != ''
+        run: patches/build.sh "$GRAAL" patch-jars
       - name: native-image
         id: ni
         continue-on-error: true
-        run: probe/probe.sh "$GRAAL" out '${{ matrix.platform }}'
+        run: probe/probe.sh "$GRAAL" out '${{ matrix.platform }}' ${{ matrix.platform != '' && 'patch-jars' || '' }}
       - name: Object
         if: always()
         run: |
-          for f in $(find out/tmp -name '*.obj' -o -name '*.o' 2>/dev/null); do echo "== $f"; dumpbin /headers "$f" | head -20; done
+          for f in $(find out/tmp -name '*.obj' -o -name '*.o' 2>/dev/null); do echo "== $f"; dumpbin -nologo -headers "$f" | head -20; done
+          obj=$(find out/tmp -name 'hello.obj' | head -1)
+          [ -z "$obj" ] || { dumpbin -nologo -relocations "$obj" | awk '{print $2}' | sort | uniq -c | sort -rn | head -20; }
       - name: Link and run (baseline)
         if: matrix.platform == '' && steps.ni.outcome == 'success'
         run: |
@@ -76,4 +81,5 @@ jobs:
             out/native-image.log
             out/capcache
             out/tmp/**/*.h
+            out/tmp/**/hello.obj
           if-no-files-found: ignore

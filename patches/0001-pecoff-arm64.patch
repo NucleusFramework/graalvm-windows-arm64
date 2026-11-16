@@ -1,0 +1,246 @@
+diff --git a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoff.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoff.java
+index a6eadd2..b6ce8f5 100644
+--- a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoff.java
++++ b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoff.java
+@@ -65,6 +65,7 @@ final class PECoff {
+          */
+         static final char IMAGE_FILE_MACHINE_UNKNOWN = 0x0;
+         static final char IMAGE_FILE_MACHINE_AMD64   = 0x8664;
++        static final char IMAGE_FILE_MACHINE_ARM64   = 0xAA64;
+ 
+     }
+ 
+@@ -206,6 +207,18 @@ final class PECoff {
+         static final int IMAGE_REL_AMD64_REL32_5  = 0x9;
+         static final int IMAGE_REL_AMD64_SECTION  = 0xa;
+         static final int IMAGE_REL_AMD64_SECREL   = 0xb;
++
++        static final int IMAGE_REL_ARM64_ADDR32         = 0x1;
++        static final int IMAGE_REL_ARM64_ADDR32NB       = 0x2;
++        static final int IMAGE_REL_ARM64_BRANCH26       = 0x3;
++        static final int IMAGE_REL_ARM64_PAGEBASE_REL21 = 0x4;
++        static final int IMAGE_REL_ARM64_PAGEOFFSET_12A = 0x6;
++        static final int IMAGE_REL_ARM64_PAGEOFFSET_12L = 0x7;
++        static final int IMAGE_REL_ARM64_SECREL         = 0x8;
++        static final int IMAGE_REL_ARM64_SECTION        = 0xd;
++        static final int IMAGE_REL_ARM64_ADDR64         = 0xe;
++        static final int IMAGE_REL_ARM64_BRANCH19       = 0xf;
++        static final int IMAGE_REL_ARM64_REL32          = 0x11;
+     }
+     //@formatter:on
+     // Checkstyle: resume
+diff --git a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java
+index b6f3f2a..09dce1a 100644
+--- a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java
++++ b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffMachine.java
+@@ -31,6 +31,9 @@ import com.oracle.objectfile.pecoff.PECoff.IMAGE_FILE_HEADER;
+ import com.oracle.objectfile.pecoff.PECoff.IMAGE_RELOCATION;
+ import com.oracle.objectfile.pecoff.PECoffRelocationTable.PECoffRelocationMethod;
+ 
++import org.graalvm.nativeimage.ImageSingletons;
++import org.graalvm.nativeimage.Platform;
++
+ import jdk.graal.compiler.serviceprovider.GraalServices;
+ 
+ /**
+@@ -42,6 +45,12 @@ public enum PECoffMachine/* implements Integral */ {
+         Class<? extends Enum<? extends RelocationMethod>> relocationTypes() {
+             return PECoffX86_64Relocation.class;
+         }
++    },
++    AARCH64 {
++        @Override
++        Class<? extends Enum<? extends RelocationMethod>> relocationTypes() {
++            return PECoffAArch64Relocation.class;
++        }
+     };
+ 
+     abstract Class<? extends Enum<? extends RelocationMethod>> relocationTypes();
+@@ -66,6 +75,35 @@ public enum PECoffMachine/* implements Integral */ {
+                     default:
+                         throw new IllegalArgumentException("Cannot map unknown relocation kind to an PECoff x86-64 relocation type");
+                 }
++            case AARCH64:
++                switch (k) {
++                    case DIRECT_8:
++                        return PECoffAArch64Relocation.ADDR64;
++                    case DIRECT_4:
++                        return PECoffAArch64Relocation.ADDR32;
++                    case PC_RELATIVE_4:
++                        return PECoffAArch64Relocation.REL32;
++                    case ADDR32NB_4:
++                        return PECoffAArch64Relocation.ADDR32NB;
++                    case SECTION_2:
++                        return PECoffAArch64Relocation.SECTION;
++                    case SECREL_4:
++                        return PECoffAArch64Relocation.SECREL;
++                    case AARCH64_R_AARCH64_ADR_PREL_PG_HI21:
++                        return PECoffAArch64Relocation.PAGEBASE_REL21;
++                    case AARCH64_R_AARCH64_ADD_ABS_LO12_NC:
++                        return PECoffAArch64Relocation.PAGEOFFSET_12A;
++                    case AARCH64_R_AARCH64_LDST128_ABS_LO12_NC:
++                    case AARCH64_R_AARCH64_LDST64_ABS_LO12_NC:
++                    case AARCH64_R_AARCH64_LDST32_ABS_LO12_NC:
++                    case AARCH64_R_AARCH64_LDST16_ABS_LO12_NC:
++                    case AARCH64_R_AARCH64_LDST8_ABS_LO12_NC:
++                        return PECoffAArch64Relocation.PAGEOFFSET_12L;
++                    case AARCH64_R_LD_PREL_LO19:
++                        return PECoffAArch64Relocation.BRANCH19;
++                    default:
++                        throw new IllegalArgumentException("Cannot map relocation kind " + k + " to a PECoff ARM64 relocation type");
++                }
+             default:
+                 throw new IllegalStateException("Unknown PECoff machine type");
+         }
+@@ -75,6 +113,8 @@ public enum PECoffMachine/* implements Integral */ {
+         switch (m) {
+             case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64:
+                 return X86_64;
++            case IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM64:
++                return AARCH64;
+             default:
+                 throw new IllegalStateException("Unknown PECoff machine type");
+         }
+@@ -83,15 +123,18 @@ public enum PECoffMachine/* implements Integral */ {
+     public short toShort() {
+         if (this == X86_64) {
+             return (short) IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_AMD64;
++        } else if (this == AARCH64) {
++            return (short) IMAGE_FILE_HEADER.IMAGE_FILE_MACHINE_ARM64;
+         } else {
+             throw new IllegalStateException("Should not reach here");
+         }
+     }
+ 
+     public static PECoffMachine getSystemNativeValue() {
+-        String arch = GraalServices.getSavedProperty("os.arch");
++        String arch = ImageSingletons.contains(Platform.class) ? ImageSingletons.lookup(Platform.class).getArchitecture() : GraalServices.getSavedProperty("os.arch");
+         return switch (arch) {
+             case "amd64", "x86_64" -> X86_64;
++            case "aarch64", "arm64" -> AARCH64;
+             default -> throw new IllegalArgumentException("Unsupported PECoff machine type: " + arch);
+         };
+     }
+@@ -154,3 +197,28 @@ enum PECoffX86_64Relocation implements PECoffRelocationMethod {
+         }
+     };
+ }
++
++enum PECoffAArch64Relocation implements PECoffRelocationMethod {
++    ADDR64(IMAGE_RELOCATION.IMAGE_REL_ARM64_ADDR64),
++    ADDR32(IMAGE_RELOCATION.IMAGE_REL_ARM64_ADDR32),
++    ADDR32NB(IMAGE_RELOCATION.IMAGE_REL_ARM64_ADDR32NB),
++    REL32(IMAGE_RELOCATION.IMAGE_REL_ARM64_REL32),
++    SECTION(IMAGE_RELOCATION.IMAGE_REL_ARM64_SECTION),
++    SECREL(IMAGE_RELOCATION.IMAGE_REL_ARM64_SECREL),
++    BRANCH26(IMAGE_RELOCATION.IMAGE_REL_ARM64_BRANCH26),
++    BRANCH19(IMAGE_RELOCATION.IMAGE_REL_ARM64_BRANCH19),
++    PAGEBASE_REL21(IMAGE_RELOCATION.IMAGE_REL_ARM64_PAGEBASE_REL21),
++    PAGEOFFSET_12A(IMAGE_RELOCATION.IMAGE_REL_ARM64_PAGEOFFSET_12A),
++    PAGEOFFSET_12L(IMAGE_RELOCATION.IMAGE_REL_ARM64_PAGEOFFSET_12L);
++
++    private final int type;
++
++    PECoffAArch64Relocation(int type) {
++        this.type = type;
++    }
++
++    @Override
++    public long toLong() {
++        return type;
++    }
++}
+diff --git a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffUserDefinedSection.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffUserDefinedSection.java
+index eea0551..d38282e 100644
+--- a/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffUserDefinedSection.java
++++ b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/PECoffUserDefinedSection.java
+@@ -156,6 +156,21 @@ public class PECoffUserDefinedSection extends PECoffSection implements ObjectFil
+          */
+         long desiredInlineAddendValue = addend;
+ 
++        if (getOwner().getMachine() == PECoffMachine.AARCH64 && AArch64InlineAddend.isInstruction(k)) {
++            /*
++             * ARM64 Coff relocations of instructions take their addend from the instruction's
++             * immediate (as lld-link and link.exe read it): encode it there, not over the
++             * instruction.
++             */
++            sbb.seek(offset);
++            int instruction = sbb.read4Byte();
++            sbb.seek(offset);
++            sbb.write4Byte(AArch64InlineAddend.encode(k, instruction, addend));
++            sbb.pop();
++            rs.addEntry(this, offset, PECoffMachine.getRelocation(getOwner().getMachine(), k), ent, addend);
++            return;
++        }
++
+         /*
+          * One more complication: for PC-relative relocation, at least on x86-64, Coff linkers
+          * adjust the calculation to compensate for the fact that it's the *next* instruction that
+diff --git a/b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/AArch64InlineAddend.java b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/AArch64InlineAddend.java
+new file mode 100644
+index 0000000..e986d74
+--- /dev/null
++++ b/substratevm/src/com.oracle.objectfile/src/com/oracle/objectfile/pecoff/AArch64InlineAddend.java
+@@ -0,0 +1,62 @@
++/*
++ * Encodes the addend of an ARM64 Coff relocation into the relocated instruction's immediate, where
++ * the linkers read it (Coff has no explicit addends).
++ */
++package com.oracle.objectfile.pecoff;
++
++import com.oracle.objectfile.ObjectFile.RelocationKind;
++
++final class AArch64InlineAddend {
++    private AArch64InlineAddend() {
++    }
++
++    static boolean isInstruction(RelocationKind k) {
++        return switch (k) {
++            case AARCH64_R_AARCH64_ADR_PREL_PG_HI21, AARCH64_R_AARCH64_ADD_ABS_LO12_NC, AARCH64_R_AARCH64_LDST128_ABS_LO12_NC, AARCH64_R_AARCH64_LDST64_ABS_LO12_NC,
++                            AARCH64_R_AARCH64_LDST32_ABS_LO12_NC, AARCH64_R_AARCH64_LDST16_ABS_LO12_NC, AARCH64_R_AARCH64_LDST8_ABS_LO12_NC, AARCH64_R_LD_PREL_LO19 ->
++                true;
++            default -> false;
++        };
++    }
++
++    static int encode(RelocationKind k, int instruction, long addend) {
++        return switch (k) {
++            // ADRP: the addend in bytes, as a signed 21-bit immediate (immhi:immlo)
++            case AARCH64_R_AARCH64_ADR_PREL_PG_HI21 -> {
++                check(addend >= -(1L << 20) && addend < (1L << 20), k, addend);
++                int imm = (int) addend;
++                yield (instruction & ~((0x3 << 29) | (0x7FFFF << 5))) | ((imm & 0x3) << 29) | (((imm >> 2) & 0x7FFFF) << 5);
++            }
++            // ADD: the addend's page offset, unscaled
++            case AARCH64_R_AARCH64_ADD_ABS_LO12_NC -> imm12(instruction, addend & 0xFFF);
++            // LDR/STR: the addend's page offset, scaled by the access size
++            case AARCH64_R_AARCH64_LDST128_ABS_LO12_NC -> scaled(k, instruction, addend, 4);
++            case AARCH64_R_AARCH64_LDST64_ABS_LO12_NC -> scaled(k, instruction, addend, 3);
++            case AARCH64_R_AARCH64_LDST32_ABS_LO12_NC -> scaled(k, instruction, addend, 2);
++            case AARCH64_R_AARCH64_LDST16_ABS_LO12_NC -> scaled(k, instruction, addend, 1);
++            case AARCH64_R_AARCH64_LDST8_ABS_LO12_NC -> scaled(k, instruction, addend, 0);
++            // LDR (literal): the linkers OR the offset into the instruction, with no addend
++            case AARCH64_R_LD_PREL_LO19 -> {
++                check(addend == 0, k, addend);
++                yield instruction & ~(0x7FFFF << 5);
++            }
++            default -> throw new IllegalArgumentException("Not an ARM64 instruction relocation: " + k);
++        };
++    }
++
++    private static int scaled(RelocationKind k, int instruction, long addend, int shift) {
++        long offset = addend & 0xFFF;
++        check((offset & ((1L << shift) - 1)) == 0, k, addend);
++        return imm12(instruction, offset >> shift);
++    }
++
++    private static int imm12(int instruction, long imm) {
++        return (instruction & ~(0xFFF << 10)) | ((int) imm << 10);
++    }
++
++    private static void check(boolean condition, RelocationKind k, long addend) {
++        if (!condition) {
++            throw new IllegalArgumentException("Addend " + addend + " can't be encoded in a PECoff ARM64 " + k + " relocation");
++        }
++    }
++}

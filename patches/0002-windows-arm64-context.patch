@@ -1,0 +1,175 @@
+diff --git a/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/headers/ErrHandlingAPI.java b/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/headers/ErrHandlingAPI.java
+index 9a5f1a4..ec24919 100644
+--- a/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/headers/ErrHandlingAPI.java
++++ b/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/headers/ErrHandlingAPI.java
+@@ -96,60 +96,25 @@ public class ErrHandlingAPI {
+     public static native int EXCEPTION_STACK_OVERFLOW();
+ 
+     /** Contains processor-specific register data. */
++    /** The ARM64 CONTEXT: X0-X28, Fp (X29) and Lr (X30) in X[31], then Sp and Pc. */
+     @CStruct
+     public interface CONTEXT extends RegisterDumper.Context {
+         @CField
+-        int EFlags();
++        int Cpsr();
+ 
+-        @CField
+-        long Rax();
+-
+-        @CField
+-        long Rcx();
+-
+-        @CField
+-        long Rdx();
+-
+-        @CField
+-        long Rbx();
+-
+-        @CField
+-        long Rsp();
+-
+-        @CField
+-        long Rbp();
+-
+-        @CField
+-        long Rsi();
+-
+-        @CField
+-        long Rdi();
+-
+-        @CField
+-        long R8();
+-
+-        @CField
+-        long R9();
+-
+-        @CField
+-        long R10();
+-
+-        @CField
+-        long R11();
+-
+-        @CField
+-        long R12();
++        @CFieldAddress
++        CLongPointer X();
+ 
+         @CField
+-        long R13();
++        long Fp();
+ 
+         @CField
+-        long R14();
++        long Lr();
+ 
+         @CField
+-        long R15();
++        long Sp();
+ 
+         @CField
+-        long Rip();
++        long Pc();
+     }
+ }
+diff --git a/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/WindowsRegisterDumper.java b/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/WindowsRegisterDumper.java
+index eab56b8..f959e6d 100644
+--- a/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/WindowsRegisterDumper.java
++++ b/substratevm/src/com.oracle.svm.core.windows/src/com/oracle/svm/core/windows/WindowsRegisterDumper.java
+@@ -26,12 +26,13 @@ package com.oracle.svm.core.windows;
+ 
+ import static com.oracle.svm.core.RegisterDumper.dumpReg;
+ 
++import org.graalvm.nativeimage.c.type.CLongPointer;
+ import org.graalvm.word.PointerBase;
+ 
+ import com.oracle.svm.core.RegisterDumper;
+ import com.oracle.svm.shared.Uninterruptible;
+ import com.oracle.svm.shared.singletons.AutomaticallyRegisteredImageSingleton;
+-import com.oracle.svm.core.graal.amd64.AMD64ReservedRegisters;
++import com.oracle.svm.core.graal.aarch64.AArch64ReservedRegisters;
+ import com.oracle.svm.guest.staging.log.Log;
+ import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+ import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+@@ -40,15 +41,18 @@ import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+ import com.oracle.svm.shared.util.VMError;
+ import com.oracle.svm.core.windows.headers.ErrHandlingAPI.CONTEXT;
+ 
+-import jdk.vm.ci.amd64.AMD64;
++import jdk.vm.ci.aarch64.AArch64;
+ import org.graalvm.word.impl.Word;
+ 
+ @AutomaticallyRegisteredImageSingleton(RegisterDumper.class)
+ @SingletonTraits(access = RuntimeAccessOnly.class, layeredCallbacks = SingleLayer.class, layeredInstallationKind = InitialLayerOnly.class)
+ class WindowsRegisterDumper implements RegisterDumper {
++    private static final String[] X_NAMES = {"R0  ", "R1  ", "R2  ", "R3  ", "R4  ", "R5  ", "R6  ", "R7  ", "R8  ", "R9  ", "R10 ", "R11 ", "R12 ", "R13 ", "R14 ",
++                    "R15 ", "R16 ", "R17 ", "R18 ", "R19 ", "R20 ", "R21 ", "R22 ", "R23 ", "R24 ", "R25 ", "R26 ", "R27 ", "R28 "};
++
+     WindowsRegisterDumper() {
+-        VMError.guarantee(AMD64.r14.equals(AMD64ReservedRegisters.HEAP_BASE_REGISTER));
+-        VMError.guarantee(AMD64.r15.equals(AMD64ReservedRegisters.THREAD_REGISTER));
++        VMError.guarantee(AArch64.r27.equals(AArch64ReservedRegisters.HEAP_BASE_REGISTER));
++        VMError.guarantee(AArch64.r28.equals(AArch64ReservedRegisters.THREAD_REGISTER));
+     }
+ 
+     @Override
+@@ -57,47 +61,38 @@ class WindowsRegisterDumper implements RegisterDumper {
+     }
+ 
+     private static void dumpRegisters(Log log, CONTEXT context, boolean printLocationInfo, boolean allowJavaHeapAccess, boolean allowUnsafeOperations) {
+-        dumpReg(log, "RAX ", context.Rax(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RBX ", context.Rbx(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RCX ", context.Rcx(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RDX ", context.Rdx(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RBP ", context.Rbp(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RSI ", context.Rsi(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RDI ", context.Rdi(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RSP ", context.Rsp(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R8  ", context.R8(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R9  ", context.R9(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R10 ", context.R10(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R11 ", context.R11(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R12 ", context.R12(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R13 ", context.R13(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R14 ", context.R14(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "R15 ", context.R15(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "EFL ", context.EFlags(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+-        dumpReg(log, "RIP ", context.Rip(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        CLongPointer x = context.X();
++        for (int i = 0; i < X_NAMES.length; i++) {
++            dumpReg(log, X_NAMES[i], x.read(i), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        }
++        dumpReg(log, "FP  ", context.Fp(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        dumpReg(log, "LR  ", context.Lr(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        dumpReg(log, "SP  ", context.Sp(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        dumpReg(log, "PC  ", context.Pc(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
++        dumpReg(log, "PSR ", context.Cpsr(), printLocationInfo, allowJavaHeapAccess, allowUnsafeOperations);
+     }
+ 
+     @Override
+     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+     public PointerBase getHeapBase(Context context) {
+-        return Word.pointer(((CONTEXT) context).R14());
++        return Word.pointer(((CONTEXT) context).X().read(27));
+     }
+ 
+     @Override
+     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+     public PointerBase getThreadPointer(Context context) {
+-        return Word.pointer(((CONTEXT) context).R15());
++        return Word.pointer(((CONTEXT) context).X().read(28));
+     }
+ 
+     @Override
+     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+     public PointerBase getSP(Context context) {
+-        return Word.pointer(((CONTEXT) context).Rsp());
++        return Word.pointer(((CONTEXT) context).Sp());
+     }
+ 
+     @Override
+     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+     public PointerBase getIP(Context context) {
+-        return Word.pointer(((CONTEXT) context).Rip());
++        return Word.pointer(((CONTEXT) context).Pc());
+     }
+ }
