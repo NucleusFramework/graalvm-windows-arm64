@@ -1,0 +1,67 @@
+diff --git a/substratevm/src/com.oracle.svm.native.libchelper/src/cpuid.c b/substratevm/src/com.oracle.svm.native.libchelper/src/cpuid.c
+index d83a9f4..aaa5053 100644
+--- a/substratevm/src/com.oracle.svm.native.libchelper/src/cpuid.c
++++ b/substratevm/src/com.oracle.svm.native.libchelper/src/cpuid.c
+@@ -41,7 +41,7 @@
+ #define alloca _alloca
+ #endif
+ 
+-#if defined(__x86_64__) || defined(_WIN64)
++#if defined(__x86_64__) || defined(_M_X64)
+ #include "amd64cpufeatures.h"
+ #include "amd64hotspotcpuinfo.h"
+ 
+@@ -671,7 +671,7 @@ int supportsAvx512SimdSort(void)
+   return supports_avx512_simd_sort;
+ }
+ 
+-#elif defined(__aarch64__)
++#elif defined(__aarch64__) || defined(_M_ARM64)
+ 
+ /*
+  * The corresponding HotSpot code can be found in vm_version_bsd_aarch64.cpp (218223e4a31d485935655cb3f186a752defd8fa8).
+@@ -723,6 +723,44 @@ void determineCPUFeatures(CPUFeatures* features) {
+  * The corresponding HotSpot code can be found in vm_version_aarch64 and
+  * vm_version_linux_aarch64.
+  */
++#elif defined(_WIN32)
++
++/*
++ * The corresponding HotSpot code can be found in vm_version_windows_aarch64.cpp.
++ */
++#include <windows.h>
++#include "aarch64cpufeatures.h"
++
++void determineCPUFeatures(CPUFeatures* features) {
++  memset(features, 0, sizeof(CPUFeatures));
++  // ARMv8 requires FP and ASIMD
++  features->fFP = 1;
++  features->fASIMD = 1;
++  if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)) {
++    features->fAES = 1;
++    features->fPMULL = 1;
++    features->fSHA1 = 1;
++    features->fSHA2 = 1;
++  }
++  features->fCRC32 = !!IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE);
++  features->fLSE = !!IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE);
++#ifdef PF_ARM_SVE_INSTRUCTIONS_AVAILABLE
++  features->fSVE = !!IsProcessorFeaturePresent(PF_ARM_SVE_INSTRUCTIONS_AVAILABLE);
++#endif
++#ifdef PF_ARM_SVE2_INSTRUCTIONS_AVAILABLE
++  features->fSVE2 = !!IsProcessorFeaturePresent(PF_ARM_SVE2_INSTRUCTIONS_AVAILABLE);
++#endif
++#ifdef PF_ARM_SVE_BITPERM_INSTRUCTIONS_AVAILABLE
++  features->fSVEBITPERM = !!IsProcessorFeaturePresent(PF_ARM_SVE_BITPERM_INSTRUCTIONS_AVAILABLE);
++#endif
++#ifdef PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE
++  features->fSHA3 = !!IsProcessorFeaturePresent(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE);
++#endif
++#ifdef PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE
++  features->fSHA512 = !!IsProcessorFeaturePresent(PF_ARM_SHA512_INSTRUCTIONS_AVAILABLE);
++#endif
++}
++
+ #elif defined(__linux__)
+ 
+ #include <sys/auxv.h>

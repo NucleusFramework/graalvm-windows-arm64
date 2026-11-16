@@ -48,6 +48,18 @@ jobs:
         run: |
           which cl link lib || true
           cl 2>&1 | head -2 || true
+      - name: GraalVM CE's C libraries (windows-amd64)
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          for l in "$GRAAL"/lib/svm/clibraries/windows-amd64/*.lib; do echo "== $(basename "$l")"; lib -nologo -list "$(cygpath -w "$l")"; done
+          ls "$GRAAL/lib/static/windows-amd64" || true
+      - name: C libraries (ARM64)
+        if: matrix.platform != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: clibs/build.sh "$GRAAL" clibs-out
       - name: Patches
         if: matrix.platform != ''
         run: patches/build.sh "$GRAAL" patch-jars
@@ -57,21 +69,23 @@ jobs:
         run: probe/probe.sh "$GRAAL" out '${{ matrix.platform }}' ${{ matrix.platform != '' && 'patch-jars' || '' }}
       - name: Object
         if: always()
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
         run: |
           for f in $(find out/tmp -name '*.obj' -o -name '*.o' 2>/dev/null); do echo "== $f"; dumpbin -nologo -headers "$f" | head -20; done
           obj=$(find out/tmp -name 'hello.obj' | head -1)
           [ -z "$obj" ] || { dumpbin -nologo -relocations "$obj" | awk '{print $2}' | sort | uniq -c | sort -rn | head -20; }
       - name: Link and run (baseline)
         if: matrix.platform == '' && steps.ni.outcome == 'success'
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
         run: |
           set -euo pipefail
-          obj=$(find out/tmp -name 'hello.obj' -o -name 'hello.o' | head -1)
-          hdr=$(dirname "$(find out -name hello.h | head -1)")
-          libs="$GRAAL/lib/svm/clibraries/windows-amd64"; static="$GRAAL/lib/static/windows-amd64"
-          ls "$libs" "$static" | head -50
-          cl /nologo /MD /I"$hdr" probe/main.c "$obj" /link /LIBPATH:"$libs" /LIBPATH:"$static" \
+          obj=$(cygpath -w "$(find out/tmp -name 'hello.obj' | head -1)")
+          libs=$(cygpath -w "$GRAAL/lib/svm/clibraries/windows-amd64"); static=$(cygpath -w "$GRAAL/lib/static/windows-amd64")
+          cl -nologo -MD -I"$(cygpath -w out)" probe/main.c "$obj" -link -LIBPATH:"$libs" -LIBPATH:"$static" \
             libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib \
-            /OUT:hello.exe || true
+            -OUT:hello.exe
           ./hello.exe
       - uses: actions/upload-artifact@v4
         if: always()
@@ -82,4 +96,5 @@ jobs:
             out/capcache
             out/tmp/**/*.h
             out/tmp/**/hello.obj
+            clibs-out
           if-no-files-found: ignore
