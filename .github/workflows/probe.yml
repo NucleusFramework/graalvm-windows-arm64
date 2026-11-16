@@ -1,0 +1,79 @@
+name: Probe
+
+# Experiments: how far GraalVM CE's released native-image gets targeting Windows on ARM64
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Baseline: the recipe itself, for the host (Windows x64)
+          - { name: x64-baseline, os: windows-latest, msvc: x64, platform: '' }
+          # GraalVM CE windows-x64 emulated on Windows ARM64, targeting it
+          - { name: arm64-target, os: windows-11-arm, msvc: arm64, platform: 'org.graalvm.nativeimage.Platform$WINDOWS_AARCH64' }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          echo "PROCESSOR_ARCHITECTURE=$PROCESSOR_ARCHITECTURE"; uname -a
+          systeminfo | grep -iE "^(OS Name|OS Version|System Type)" || true
+      - name: GraalVM CE (windows-x64)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api repos/graalvm/graalvm-ce-builds/releases/latest --jq .tag_name)
+          url=$(gh api "repos/graalvm/graalvm-ce-builds/releases/tags/$tag" --jq '.assets[] | select(.name | endswith("_windows-x64_bin.zip")) | .browser_download_url')
+          echo "GraalVM CE $tag: $url"
+          curl -sSfL -o graal.zip "$url" && unzip -q graal.zip -d graal
+          home=$(dirname "$(find graal -maxdepth 3 -name release | head -1)")
+          echo "GRAAL=$PWD/$home" >> "$GITHUB_ENV"
+          cat "$home/release"
+          "$home/bin/java" -XshowSettings:properties -version 2>&1 | grep -E "os\.(arch|name)|java\.vm\.version"
+          ls "$home/lib/svm/builder" "$home/lib/svm/clibraries" || true
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc }}
+      - name: Toolchain
+        run: |
+          which cl link lib || true
+          cl 2>&1 | head -2 || true
+      - name: native-image
+        id: ni
+        continue-on-error: true
+        run: probe/probe.sh "$GRAAL" out '${{ matrix.platform }}'
+      - name: Object
+        if: always()
+        run: |
+          for f in $(find out/tmp -name '*.obj' -o -name '*.o' 2>/dev/null); do echo "== $f"; dumpbin /headers "$f" | head -20; done
+      - name: Link and run (baseline)
+        if: matrix.platform == '' && steps.ni.outcome == 'success'
+        run: |
+          set -euo pipefail
+          obj=$(find out/tmp -name 'hello.obj' -o -name 'hello.o' | head -1)
+          hdr=$(dirname "$(find out -name hello.h | head -1)")
+          libs="$GRAAL/lib/svm/clibraries/windows-amd64"; static="$GRAAL/lib/static/windows-amd64"
+          ls "$libs" "$static" | head -50
+          cl /nologo /MD /I"$hdr" probe/main.c "$obj" /link /LIBPATH:"$libs" /LIBPATH:"$static" \
+            libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib \
+            /OUT:hello.exe || true
+          ./hello.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ matrix.name }}
+          path: |
+            out/native-image.log
+            out/capcache
+            out/tmp/**/*.h
+          if-no-files-found: ignore
