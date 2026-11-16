@@ -87,6 +87,20 @@ jobs:
             libchelper.lib jvm.lib java.lib nio.lib net.lib zip.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib version.lib \
             -OUT:hello.exe
           ./hello.exe
+      - name: Link (ARM64, without the JDK's libraries)
+        if: matrix.platform != '' && steps.ni.outcome == 'success'
+        continue-on-error: true
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          obj=$(cygpath -w "$(find out/tmp -name 'hello.obj' | head -1)")
+          dumpbin -nologo -relocations "$obj" | awk '$2 ~ /^[0-9A-F]+$/ {print $2}' | sort | uniq -c | sort -rn | head
+          cl -nologo -MD -I"$(cygpath -w out)" probe/main.c "$obj" -link -LIBPATH:"$(cygpath -w clibs-out)" \
+            libchelper.lib jvm.lib ws2_32.lib advapi32.lib secur32.lib iphlpapi.lib userenv.lib version.lib \
+            -OUT:hello.exe 2>&1 | tee link.log
+          echo "Unresolved: $(grep -c 'unresolved external symbol' link.log)"
+          grep -o 'unresolved external symbol [A-Za-z0-9_@?$]*' link.log | awk '{print $4}' | sort -u | head -150
+          [ -f hello.exe ] && ./hello.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
