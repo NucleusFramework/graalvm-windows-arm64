@@ -1,7 +1,7 @@
 name: JDK static libraries
 
 # The JDK's static libraries for Windows on ARM64 (java.lib, nio.lib, net.lib, zip.lib...), which native images link and
-# GraalVM CE ships for windows-amd64 only: labs-openjdk (the JDK GraalVM CE is built on) at the release's JVMCI tag,
+# GraalVM CE ships for windows-amd64 only, and the JDK's DLLs (awt.dll, fontmanager.dll...) images copy: labs-openjdk (the JDK GraalVM CE is built on) at the release's JVMCI tag,
 # built with OpenJDK's static-libs-image target
 on:
   workflow_dispatch:
@@ -40,17 +40,20 @@ jobs:
           bash configure --openjdk-target=aarch64-unknown-cygwin --with-boot-jdk="$(cygpath -u "$BOOT_JDK")" \
             --with-debug-level=release --with-jvm-variants=server --disable-warnings-as-errors --with-version-opt=static \
             --disable-javac-server 2>&1 | tail -40
-      - name: static-libs-image
+      - name: images, static-libs-image
         shell: C:\cygwin\bin\bash.exe --login -eo pipefail -o igncr {0}
         run: |
           cd /cygdrive/c/jdk
-          make static-libs-image LOG=warn 2>&1 | tail -80
+          # The JDK image too: on Windows, native images load the JDK's AWT, font, sound... DLLs next to the executable
+          make images static-libs-image LOG=warn 2>&1 | tail -80
           ls build/*/images/static-libs/lib
+          mkdir -p dlls && cp build/*/images/jdk/bin/*.dll dlls/ && ls dlls
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: jdk-static-libs-windows-aarch64-${{ inputs.tag }}
           path: |
             C:/jdk/build/*/images/static-libs/lib
+            C:/jdk/dlls
             C:/jdk/build/*/configure-support/config.log
           if-no-files-found: warn

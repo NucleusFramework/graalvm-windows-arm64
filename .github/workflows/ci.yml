@@ -47,6 +47,9 @@ jobs:
           gh run download "$run" --name "jdk-static-libs-windows-aarch64-$tag" --dir "$RUNNER_TEMP/jdklibs"
           mkdir -p kit-out/lib/static/windows-aarch64
           cp "$(dirname "$(find "$RUNNER_TEMP/jdklibs" -name java.lib | head -1)")"/*.lib kit-out/lib/static/windows-aarch64/
+          # The JDK's DLLs (AWT, fonts, sound...), copied next to images
+          mkdir -p kit-out/lib/svm/jdk-libraries/windows-aarch64
+          cp "$(dirname "$(find "$RUNNER_TEMP/jdklibs" -name awt.dll | head -1)")"/*.dll kit-out/lib/svm/jdk-libraries/windows-aarch64/
           cp kit/install.sh kit-out/
           ls -R kit-out | head -80
       - uses: actions/upload-artifact@v4
