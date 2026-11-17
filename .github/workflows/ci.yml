@@ -89,6 +89,42 @@ jobs:
           dumpbin -nologo -headers hello.exe | grep -i machine
           ./hello.exe
 
+  lucene:
+    needs: kit
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/graalvm
+        with:
+          release: ${{ inputs.graalvm }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: kit-windows-aarch64
+          path: kit
+      - name: Install the kit
+        run: echo "NATIVE_IMAGE_OPTIONS=$(bash kit/install.sh "$GRAAL")" >> "$GITHUB_ENV"
+      - name: Lucene smoke test (graalvm-mobile's)
+        run: |
+          set -euo pipefail
+          lucene=10.5.2
+          for a in lucene-core lucene-analysis-common; do
+            curl -sSfL -o "$a.jar" "https://repo1.maven.org/maven2/org/apache/lucene/$a/$lucene/$a-$lucene.jar"
+          done
+          cp="lucene-core.jar;lucene-analysis-common.jar"
+          "$GRAAL/bin/javac.exe" -d classes -cp "$cp" smoke/Smoke.java
+          mkdir -p run-jvm run-native
+          # What it reaches by reflection, traced on the JVM (GraalVM CE x64, emulated)
+          NATIVE_IMAGE_OPTIONS= "$GRAAL/bin/java.exe" -agentlib:native-image-agent=config-output-dir=config -cp "classes;$cp" Smoke run-jvm
+          "$GRAAL/bin/native-image.cmd" -cp "classes;$cp" -H:ConfigurationFileDirectories=config -H:+ReportExceptionStackTraces Smoke -o smoke
+          ./smoke.exe run-native
+
   nucleus-tao:
     needs: kit
     runs-on: windows-11-arm
