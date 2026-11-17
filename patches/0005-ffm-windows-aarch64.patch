@@ -1,0 +1,57 @@
+diff --git a/substratevm/src/com.oracle.svm.core.foreign/src/com/oracle/svm/core/foreign/AbiUtils.java b/substratevm/src/com.oracle.svm.core.foreign/src/com/oracle/svm/core/foreign/AbiUtils.java
+index 1ed5c39..b58a084 100644
+--- a/substratevm/src/com.oracle.svm.core.foreign/src/com/oracle/svm/core/foreign/AbiUtils.java
++++ b/substratevm/src/com.oracle.svm.core.foreign/src/com/oracle/svm/core/foreign/AbiUtils.java
+@@ -493,6 +493,10 @@ public abstract class AbiUtils {
+ 
+     @Platforms(Platform.HOSTED_ONLY.class)
+     public static AbiUtils create() {
++        /* The target's ABI, not the builder's: native-image may run emulated (x64 on Windows on ARM64) */
++        if (Platform.includedIn(Platform.WINDOWS_AARCH64.class)) {
++            return new ABIs.WindowsAArch64();
++        }
+         return switch (CABI.current()) {
+             case SYS_V -> new ABIs.SysV();
+             case WIN_64 -> new ABIs.Win64();
+@@ -1033,6 +1037,41 @@ class ABIs {
+         }
+     }
+ 
++    @BasedOnJDKClass(jdk.internal.foreign.abi.aarch64.windows.WindowsAArch64Linker.class)
++    @BasedOnJDKClass(jdk.internal.foreign.abi.aarch64.windows.WindowsAArch64CallArranger.class)
++    @SingletonTraits(access = AllAccess.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Duplicable.class)
++    static final class WindowsAArch64 extends ARM64 {
++
++        @Override
++        protected CallingSequence makeCallingSequence(MethodType type, FunctionDescriptor desc, boolean forUpcall, LinkerOptions options) {
++            return jdk.internal.foreign.abi.aarch64.CallArranger.WINDOWS.getBindings(type, desc, forUpcall, options).callingSequence();
++        }
++
++        @Override
++        public void checkLibrarySupport() {
++            VMError.guarantee(ForeignFunctionsRuntime.isLibcSupported(), REQUIRES_LIB_C_SUPPORT);
++            VMError.guarantee(ForeignFunctionsRuntime.isWindowsApiSupported(), "Capturing call state requires Windows API support");
++        }
++
++        /**
++         * The Windows ARM64 ABI passes variadic floating-point arguments in general purpose
++         * registers: reinterpret them as longs (as {@code Win64} does for its register copies).
++         */
++        @Override
++        @Platforms(Platform.HOSTED_ONLY.class)
++        protected List<Adapter.Adaptation> generateAdaptations(NativeEntryPointInfo nep) {
++            List<Adapter.Adaptation> adaptations = super.generateAdaptations(nep);
++            for (int i = 0; i < adaptations.size(); i++) {
++                Class<?> type = nep.methodType().parameterType(i);
++                if ((type == float.class || type == double.class) && nep.parametersAssignment()[i].type() == AArch64Architecture.StorageType.INTEGER) {
++                    assert adaptations.get(i) == null;
++                    adaptations.set(i, Adapter.reinterpret(JavaKind.Long));
++                }
++            }
++            return adaptations;
++        }
++    }
++
+     @BasedOnJDKClass(X86_64Architecture.class)
+     @BasedOnJDKClass(jdk.internal.foreign.abi.DowncallLinker.class)
+     @BasedOnJDKClass(jdk.internal.foreign.abi.UpcallLinker.class)

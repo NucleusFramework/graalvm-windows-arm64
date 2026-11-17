@@ -1,4 +1,17 @@
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
+
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
@@ -26,6 +39,9 @@ public final class Hello {
             check("threads", Hello::threads);
             check("time zones", () -> ZonedDateTime.now(ZoneId.of("Asia/Jerusalem")).getZone().getId());
             check("files", Hello::files);
+            check("ffm downcall", Hello::ffmDowncall);
+            check("ffm varargs", Hello::ffmVarargs);
+            check("ffm upcall", Hello::ffmUpcall);
             check("string format", () -> String.format("%.3f|%08x|%s", Math.PI, 0xCAFE, List.of(1, 2, 3)));
             System.out.println("smoke ok");
             return 0;
@@ -36,10 +52,10 @@ public final class Hello {
     }
 
     interface Check {
-        Object run() throws Exception;
+        Object run() throws Throwable;
     }
 
-    static void check(String name, Check check) throws Exception {
+    static void check(String name, Check check) throws Throwable {
         long start = System.nanoTime();
         Object result = check.run();
         System.out.printf("  %-14s %s (%d ms)%n", name, result, (System.nanoTime() - start) / 1_000_000);
@@ -149,6 +165,63 @@ public final class Hello {
             throw new AssertionError(back.length() + " != " + size);
         }
         return size + " bytes";
+    }
+
+    // The foreign functions' descriptors, registered by HelloFeature
+    static final FunctionDescriptor STRLEN = FunctionDescriptor.of(JAVA_LONG, ADDRESS);
+    static final FunctionDescriptor TICKS = FunctionDescriptor.of(JAVA_LONG);
+    static final FunctionDescriptor SPRINTF = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_DOUBLE, JAVA_INT, JAVA_DOUBLE);
+    static final Linker.Option SPRINTF_VARIADIC = Linker.Option.firstVariadicArg(2);
+    static final FunctionDescriptor QSORT = FunctionDescriptor.ofVoid(ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS);
+    static final FunctionDescriptor COMPARE = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS);
+
+    static Object ffmDowncall() throws Throwable {
+        Linker linker = Linker.nativeLinker();
+        MethodHandle strlen = linker.downcallHandle(linker.defaultLookup().find("strlen").orElseThrow(), STRLEN);
+        try (Arena arena = Arena.ofConfined()) {
+            long length = (long) strlen.invokeExact(arena.allocateFrom("hello, foreign world"));
+            if (length != 20) {
+                throw new AssertionError("strlen = " + length);
+            }
+            MethodHandle ticks = linker.downcallHandle(SymbolLookup.libraryLookup("kernel32.dll", arena).find("GetTickCount64").orElseThrow(), TICKS);
+            return "strlen " + length + ", GetTickCount64 " + ((long) ticks.invokeExact() > 0);
+        }
+    }
+
+    static Object ffmVarargs() throws Throwable {
+        Linker linker = Linker.nativeLinker();
+        try (Arena arena = Arena.ofConfined()) {
+            // Windows on ARM64 passes variadic floating-point arguments in general purpose registers
+            MethodHandle sprintf = linker.downcallHandle(SymbolLookup.libraryLookup("msvcrt.dll", arena).find("sprintf").orElseThrow(), SPRINTF, SPRINTF_VARIADIC);
+            MemorySegment buffer = arena.allocate(128);
+            int n = (int) sprintf.invokeExact(buffer, arena.allocateFrom("%.3f %d %.1f"), Math.PI, 42, -2.5);
+            String result = buffer.getString(0);
+            if (!result.equals("3.142 42 -2.5") || n != result.length()) {
+                throw new AssertionError("sprintf = '" + result + "' (" + n + ")");
+            }
+            return result;
+        }
+    }
+
+    static int compare(MemorySegment a, MemorySegment b) {
+        return Integer.compare(a.reinterpret(4).get(JAVA_INT, 0), b.reinterpret(4).get(JAVA_INT, 0));
+    }
+
+    static Object ffmUpcall() throws Throwable {
+        Linker linker = Linker.nativeLinker();
+        try (Arena arena = Arena.ofConfined()) {
+            MethodHandle qsort = linker.downcallHandle(SymbolLookup.libraryLookup("msvcrt.dll", arena).find("qsort").orElseThrow(), QSORT);
+            MethodHandle compare = MethodHandles.lookup().findStatic(Hello.class, "compare", MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class));
+            MemorySegment comparator = linker.upcallStub(compare, COMPARE, arena);
+            int[] values = {9, -3, 7, 0, 42, 5, -11, 8};
+            MemorySegment array = arena.allocateFrom(JAVA_INT, values);
+            qsort.invokeExact(array, (long) values.length, 4L, comparator);
+            int[] sorted = array.toArray(JAVA_INT);
+            if (!java.util.Arrays.equals(sorted, new int[]{-11, -3, 0, 5, 7, 8, 9, 42})) {
+                throw new AssertionError(java.util.Arrays.toString(sorted));
+            }
+            return java.util.Arrays.toString(sorted);
+        }
     }
 
     public static void main(String[] args) {

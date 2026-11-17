@@ -1,0 +1,25 @@
+name: GraalVM CE (windows-x64)
+description: Downloads a GraalVM CE windows-x64 release (its latest by default), its home in GRAAL
+inputs:
+  release:
+    description: graalvm/graalvm-ce-builds release tag
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE: ${{ inputs.release }}
+      run: |
+        set -euo pipefail
+        tag=${RELEASE:-$(gh api repos/graalvm/graalvm-ce-builds/releases/latest --jq .tag_name)}
+        url=$(gh api "repos/graalvm/graalvm-ce-builds/releases/tags/$tag" --jq '.assets[] | select(.name | endswith("_windows-x64_bin.zip")) | .browser_download_url')
+        echo "GraalVM CE $tag"
+        curl -sSfL -o "$RUNNER_TEMP/graal.zip" "$url"
+        unzip -q "$RUNNER_TEMP/graal.zip" -d "$RUNNER_TEMP/graal"
+        home=$(dirname "$(find "$RUNNER_TEMP/graal" -maxdepth 3 -name release | head -1)")
+        echo "GRAAL=$home" >> "$GITHUB_ENV"
+        echo "GRAALVM_RELEASE=$tag" >> "$GITHUB_ENV"
+        grep -E "GRAALVM_VERSION|JAVA_RUNTIME_VERSION|^SOURCE" "$home/release"

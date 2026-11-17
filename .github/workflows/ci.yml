@@ -1,0 +1,166 @@
+name: CI
+
+# Builds the kit for a GraalVM CE release (default: its latest) and tests it on Windows on ARM64: the probe (the JDK's
+# natives, exceptions, stack overflows, the GC, threads, foreign functions) and a Nucleus app (tao-native-test, Nucleus'
+# own GraalVM test runner for its Tao windowing backend: offscreen battery and real windows)
+on:
+  workflow_dispatch:
+    inputs:
+      graalvm:
+        description: GraalVM CE release tag (default its latest)
+        required: false
+      nucleus:
+        description: Nucleus branch
+        default: nucleus-3.0
+  push:
+    branches: [main]
+
+jobs:
+  kit:
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/graalvm
+        with:
+          release: ${{ inputs.graalvm }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Patches
+        run: patches/build.sh "$GRAAL" kit-out/patches
+      - name: Substrate VM's C libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: clibs/build.sh "$GRAAL" kit-out/lib/svm/clibraries/windows-aarch64
+      - name: The JDK's static libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(sed -n 's/^JAVA_RUNTIME_VERSION=".*-\(jvmci-[0-9.]*-b[0-9]*\)"$/\1/p' "$GRAAL/release")
+          echo "labs-openjdk $tag"
+          run=$(gh run list --workflow jdk-static-libs.yml --status success --json databaseId,displayTitle --jq '.[0].databaseId')
+          gh run download "$run" --name "jdk-static-libs-windows-aarch64-$tag" --dir "$RUNNER_TEMP/jdklibs"
+          mkdir -p kit-out/lib/static/windows-aarch64
+          cp "$(dirname "$(find "$RUNNER_TEMP/jdklibs" -name java.lib | head -1)")"/*.lib kit-out/lib/static/windows-aarch64/
+          cp kit/install.sh kit-out/
+          ls -R kit-out | head -80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kit-windows-aarch64
+          path: kit-out
+
+  probe:
+    needs: kit
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/graalvm
+        with:
+          release: ${{ inputs.graalvm }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: kit-windows-aarch64
+          path: kit
+      - name: Install the kit
+        run: echo "NATIVE_IMAGE_OPTIONS=$(bash kit/install.sh "$GRAAL")" >> "$GITHUB_ENV"
+      - name: native-image
+        run: |
+          set -euo pipefail
+          echo "NATIVE_IMAGE_OPTIONS=$NATIVE_IMAGE_OPTIONS"
+          "$GRAAL/bin/javac.exe" -d classes probe/Hello.java probe/HelloFeature.java
+          "$GRAAL/bin/native-image.cmd" -cp classes --features=HelloFeature -H:+ForeignAPISupport --enable-native-access=ALL-UNNAMED \
+            -H:+ReportExceptionStackTraces Hello -o hello 2>&1 | tee native-image.log
+      - name: Run
+        env:
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          dumpbin -nologo -headers hello.exe | grep -i machine
+          ./hello.exe
+
+  nucleus-tao:
+    needs: kit
+    runs-on: windows-11-arm
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nucleus' natives (its CI's latest successful build of the branch)
+        id: natives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.nucleus || 'nucleus-3.0' }}
+        run: |
+          set -euo pipefail
+          run=$(gh run list -R NucleusFramework/Nucleus --branch "$BRANCH" --workflow "Pre Merge Checks" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          sha=$(gh run view "$run" -R NucleusFramework/Nucleus --json headSha --jq .headSha)
+          echo "Nucleus $BRANCH: run $run, $sha"
+          gh run download "$run" -R NucleusFramework/Nucleus --name natives-windows --dir "$RUNNER_TEMP/natives"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: NucleusFramework/Nucleus
+          ref: ${{ steps.natives.outputs.sha }}
+          path: nucleus
+      - name: Natives into the checkout
+        run: |
+          cp -R "$RUNNER_TEMP/natives/." nucleus/
+          find nucleus -path '*nucleus/native/win32-aarch64/*' -name '*.dll' | head -40
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '25'
+      - uses: ./.github/actions/graalvm
+        with:
+          release: ${{ inputs.graalvm }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: kit-windows-aarch64
+          path: kit
+      - name: Install the kit
+        run: |
+          echo "NATIVE_IMAGE_OPTIONS=$(bash kit/install.sh "$GRAAL")" >> "$GITHUB_ENV"
+          echo "GRAALVM_HOME=$(cygpath -w "$GRAAL")" >> "$GITHUB_ENV"
+          java -XshowSettings:properties -version 2>&1 | grep os.arch
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build tao-native-test
+        working-directory: nucleus
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :examples:tao-native-test:packageGraalvmNative -PnativeMarch=compatibility --no-daemon --stacktrace
+      - name: Run tao-native-test
+        working-directory: nucleus
+        env:
+          NUCLEUS_TAO_INPUT_INJECTION: '1'
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          set -euo pipefail
+          BIN=$(find examples/tao-native-test/build/compose/binaries -type f -name 'tao-native-test.exe' | head -1)
+          echo "binary: $BIN"
+          dumpbin -nologo -headers "$BIN" | grep -i machine
+          "$BIN" battery
+          "$BIN" headful
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tao-native-test-windows-aarch64
+          path: |
+            nucleus/examples/tao-native-test/build/compose/binaries
+            nucleus/**/build/reports
+          if-no-files-found: ignore
