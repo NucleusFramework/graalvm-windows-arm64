@@ -29,6 +29,10 @@ import org.graalvm.nativeimage.c.function.CEntryPoint;
 public final class Hello {
     @CEntryPoint(name = "hello_run")
     static int run(IsolateThread thread) {
+        return runChecks();
+    }
+
+    static int runChecks() {
         try {
             System.out.println("hello from " + System.getProperty("os.name") + " " + System.getProperty("os.arch"));
             check("exceptions", Hello::exceptions);
@@ -225,6 +229,6 @@ public final class Hello {
     }
 
     public static void main(String[] args) {
-        System.exit(run(null));
+        System.exit(runChecks());
     }
 }
